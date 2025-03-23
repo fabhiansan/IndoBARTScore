@@ -145,15 +145,15 @@ def evaluate_indonesian_summarization(source_texts, summaries, batch_size=4):
 if __name__ == "__main__":
     # Example Indonesian texts and summaries
     indonesian_sources = [
-        "Perekonomian Indonesia sedang mengalami pertumbuhan yang signifikan dalam beberapa tahun terakhir. Berbagai sektor industri mulai berkembang pesat, terutama di bidang teknologi dan pariwisata. Investasi asing juga terus meningkat seiring dengan stabilnya kondisi politik dan keamanan. Pemerintah telah melakukan berbagai upaya untuk meningkatkan iklim investasi, seperti menyederhanakan perizinan dan memberikan insentif pajak. Meskipun demikian, masih ada beberapa tantangan yang dihadapi, seperti infrastruktur yang belum merata dan kesenjangan ekonomi antar daerah.",
+        "Cuaca cerah hari ini membuat para petani dapat bekerja di sawah dengan lancar dan optimal",
         
-        "Jakarta adalah ibu kota Indonesia yang merupakan pusat pemerintahan dan ekonomi. Kota ini menghadapi berbagai masalah perkotaan seperti kemacetan, banjir, dan polusi udara. Pemerintah telah menerapkan berbagai kebijakan untuk mengatasi masalah tersebut, termasuk pembangunan transportasi massal dan normalisasi sungai. Meskipun demikian, jumlah penduduk yang terus bertambah dan urbanisasi yang tinggi membuat permasalahan ini sulit diatasi sepenuhnya."
+        "Cuaca cerah hari ini membuat para petani dapat bekerja di sawah dengan lancar dan optimal."
     ]
 
     indonesian_summaries = [
-        "Ekonomi Indonesia tumbuh signifikan dengan perkembangan di sektor teknologi dan pariwisata serta peningkatan investasi asing, namun masih menghadapi tantangan infrastruktur dan kesenjangan ekonomi.",
+        "Cuaca yang cerah mendukung kegiatan bertani hari ini.",
         
-        "Jakarta sebagai ibu kota Indonesia menghadapi masalah kemacetan, banjir, dan polusi, yang diatasi pemerintah dengan transportasi massal dan normalisasi sungai, tetapi urbanisasi tinggi mempersulit penyelesaian."
+        "Cuaca yang mendung menghambat pekerjaan di sawah."
     ]
 
     print("=" * 60)

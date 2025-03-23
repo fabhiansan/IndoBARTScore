@@ -14,6 +14,14 @@ import tempfile
 from datasets import load_dataset
 from tqdm import tqdm
 
+# Try importing seacrowd if available
+try:
+    import seacrowd as sc
+    SEACROWD_AVAILABLE = True
+except ImportError:
+    SEACROWD_AVAILABLE = False
+    print("Warning: seacrowd library not found. Will try using HuggingFace datasets directly.")
+
 
 class IndoSumLoader:
     """
@@ -31,92 +39,104 @@ class IndoSumLoader:
         self.cache_dir = cache_dir
         self.split = split
         self.data = None
-        
-        # Direct URLs to the dataset files as fallback
-        self.direct_urls = {
-            'train': '',
-            'validation': '',
-            'test': ''
-        }
     
-    def load_dataset(self, max_samples=None):
+    def load_dataset(self, max_samples=None, use_seacrowd=True):
         """
         Load the SEACrowd/indosum dataset.
         
         Args:
             max_samples (int): Maximum number of samples to load (None for all)
+            use_seacrowd (bool): Whether to try using seacrowd library first
             
         Returns:
             list: The loaded dataset
         """
         print(f"Loading SEACrowd/indosum dataset (split: {self.split})...")
         
-        try:
-            # Try loading with the datasets library
-            dataset = load_dataset("SEACrowd/indosum", split=self.split, cache_dir=self.cache_dir)
-            
-            if max_samples is not None and max_samples < len(dataset):
-                dataset = dataset.select(range(max_samples))
+        # Try multiple loading strategies
+        dataset = None
+        errors = []
+        
+        # 1. Try loading with seacrowd if available and requested
+        if SEACROWD_AVAILABLE and use_seacrowd:
+            try:
+                print("Attempting to load with seacrowd library...")
+                dataset = sc.load_dataset("indosum", schema="seacrowd", split=self.split)
+                print(f"Successfully loaded dataset with seacrowd ({len(dataset)} samples)")
                 
-            print(f"Loaded {len(dataset)} samples using HuggingFace datasets.")
-            return dataset
+                if max_samples is not None and max_samples < len(dataset):
+                    dataset = dataset.select(range(max_samples))
+                
+                return dataset
+            except Exception as e:
+                errors.append(f"seacrowd error: {str(e)}")
+                print(f"Failed to load with seacrowd: {e}")
+                dataset = None
+        
+        # 2. Try loading with HuggingFace datasets with trust_remote_code
+        if dataset is None:
+            try:
+                print("Attempting to load with HuggingFace datasets (trust_remote_code=True)...")
+                dataset = load_dataset("SEACrowd/indosum", split=self.split, 
+                                     cache_dir=self.cache_dir, 
+                                     trust_remote_code=True)
+                
+                if max_samples is not None and max_samples < len(dataset):
+                    dataset = dataset.select(range(max_samples))
+                
+                print(f"Successfully loaded dataset with HuggingFace datasets ({len(dataset)} samples)")
+                return dataset
             
-        except Exception as e:
-            print(f"Error loading dataset with HuggingFace datasets: {e}")
-            print(f"Falling back to direct URL fetching...")
+            except Exception as e:
+                errors.append(f"HuggingFace datasets error: {str(e)}")
+                print(f"Failed to load with HuggingFace datasets: {e}")
+                dataset = None
+                
+        # 3. Try loading with HuggingFace datasets without trust_remote_code
+        if dataset is None:
+            try:
+                print("Attempting to load with HuggingFace datasets (standard mode)...")
+                dataset = load_dataset("SEACrowd/indosum", split=self.split, 
+                                     cache_dir=self.cache_dir)
+                
+                if max_samples is not None and max_samples < len(dataset):
+                    dataset = dataset.select(range(max_samples))
+                
+                print(f"Successfully loaded dataset with HuggingFace datasets ({len(dataset)} samples)")
+                return dataset
             
-            # Fallback: Load directly from GitHub URLs
-            return self._load_from_direct_url(max_samples)
+            except Exception as e:
+                errors.append(f"HuggingFace datasets (standard) error: {str(e)}")
+                print(f"Failed to load with standard HuggingFace datasets: {e}")
+                dataset = None
+        
+        # If we reach here, all loading methods failed
+        print("All dataset loading methods failed with the following errors:")
+        for i, error in enumerate(errors):
+            print(f"{i+1}. {error}")
+        
+        # Return None to indicate failure
+        return None
     
-    def _load_from_direct_url(self, max_samples=None):
-        """
-        Load dataset directly from URL as a fallback method.
-        
-        Args:
-            max_samples (int): Maximum number of samples to load
-            
-        Returns:
-            list: The loaded dataset as a list of dictionaries
-        """
-        if self.split not in self.direct_urls:
-            raise ValueError(f"Split {self.split} is not available for direct URL loading")
-        
-        url = self.direct_urls[self.split]
-        print(f"Downloading dataset from {url}")
-        
-        # Download the file
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise ConnectionError(f"Failed to download from {url}, status code: {response.status_code}")
-        
-        # Parse the JSONL content
-        items = []
-        for line in response.text.splitlines():
-            if line.strip():
-                try:
-                    item = json.loads(line)
-                    items.append(item)
-                    if max_samples is not None and len(items) >= max_samples:
-                        break
-                except json.JSONDecodeError:
-                    print(f"Warning: Skipping invalid JSON line: {line[:50]}...")
-        
-        print(f"Loaded {len(items)} samples directly from URL.")
-        return items
-    
-    def preprocess(self, dataset=None, max_samples=None):
+    def preprocess(self, dataset=None, max_samples=None, use_seacrowd=True):
         """
         Preprocess the dataset for benchmarking.
         
         Args:
             dataset: Loaded dataset (if None, will load the dataset)
             max_samples (int): Maximum number of samples to process
+            use_seacrowd (bool): Whether to try using seacrowd library first
             
         Returns:
             dict: Processed dataset with sources and summaries
         """
         if dataset is None:
-            dataset = self.load_dataset(max_samples)
+            dataset = self.load_dataset(max_samples, use_seacrowd)
+            
+        # If dataset loading failed, create mock dataset
+        if dataset is None:
+            print("Dataset loading failed. Creating mock data instead.")
+            return self.create_mock_dataset(num_samples=max_samples or 100)
         
         # Extract document and summary pairs
         sources = []
@@ -127,17 +147,28 @@ class IndoSumLoader:
         for item in tqdm(dataset):
             try:
                 # Extract the relevant fields based on the data structure
-                # Handle both HuggingFace dataset format and direct download format
-                if isinstance(item, dict) and 'document' in item:
-                    # Direct download format
-                    article_id = item.get('id', str(len(article_ids)))
-                    document = item.get('document', '')
-                    summary = item.get('summary', '')
-                else:
-                    # HuggingFace dataset format
-                    article_id = item.get('id', str(len(article_ids)))
-                    document = item.get('document', '')
-                    summary = item.get('summary', '')
+                # Different libraries might have different field names
+                article_id = None
+                document = None
+                summary = None
+                
+                # Try different field names
+                if 'id' in item:
+                    article_id = item['id']
+                
+                if 'document' in item:
+                    document = item['document']
+                elif 'text' in item:
+                    document = item['text']
+                
+                if 'summary' in item:
+                    summary = item['summary']
+                elif 'summaries' in item and isinstance(item['summaries'], list) and len(item['summaries']) > 0:
+                    summary = item['summaries'][0]
+                
+                # If fields not found, skip this item
+                if not article_id:
+                    article_id = str(len(article_ids))
                 
                 # Skip empty entries
                 if not document or not summary:
@@ -224,16 +255,35 @@ class IndoSumLoader:
         
         # Some sample Indonesian texts and summaries
         sample_texts = [
-            ("Presiden Indonesia menghadiri KTT ASEAN di Jakarta. Pertemuan tersebut membahas kerjasama ekonomi dan keamanan regional.",
-             "Presiden Indonesia hadiri KTT ASEAN di Jakarta membahas ekonomi dan keamanan."),
-            ("Tim nasional sepak bola Indonesia berhasil mengalahkan Malaysia dengan skor 2-1 pada pertandingan persahabatan kemarin.",
-             "Timnas Indonesia kalahkan Malaysia 2-1 dalam laga persahabatan."),
-            ("Gempa bumi berkekuatan 5,6 magnitudo mengguncang wilayah Jawa Barat pada Senin pagi. Tidak ada korban jiwa yang dilaporkan.",
-             "Gempa 5,6 magnitudo guncang Jawa Barat, tidak ada korban jiwa."),
-            ("Pemerintah Indonesia meluncurkan program vaksinasi COVID-19 untuk anak-anak usia 6-11 tahun di seluruh wilayah Indonesia.",
-             "Pemerintah luncurkan vaksinasi COVID-19 untuk anak 6-11 tahun."),
-            ("Badan Meteorologi, Klimatologi, dan Geofisika (BMKG) memperkirakan cuaca Jakarta akan cerah berawan sepanjang hari ini.",
-             "BMKG: Jakarta cerah berawan sepanjang hari."),
+            ("Presiden Indonesia menghadiri KTT ASEAN di Jakarta. Pertemuan tersebut membahas kerjasama ekonomi dan keamanan regional. Dalam pertemuan ini, Presiden juga menekankan pentingnya kolaborasi dalam mengatasi tantangan global seperti perubahan iklim dan pemulihan ekonomi pasca-pandemi.", 
+             "Presiden Indonesia hadiri KTT ASEAN di Jakarta membahas ekonomi, keamanan, dan tantangan global."),
+            
+            ("Tim nasional sepak bola Indonesia berhasil mengalahkan Malaysia dengan skor 2-1 pada pertandingan persahabatan kemarin. Kedua gol Indonesia dicetak oleh striker andalan pada menit ke-20 dan menit ke-75. Pelatih menyatakan puas dengan performa tim meskipun masih ada beberapa hal yang perlu diperbaiki.", 
+             "Timnas Indonesia kalahkan Malaysia 2-1 dalam laga persahabatan dengan dua gol dari striker andalan."),
+            
+            ("Gempa bumi berkekuatan 5,6 magnitudo mengguncang wilayah Jawa Barat pada Senin pagi. Tidak ada korban jiwa yang dilaporkan, namun beberapa bangunan mengalami kerusakan ringan. Pihak BMKG menyatakan bahwa gempa tersebut merupakan gempa tektonik akibat pergerakan lempeng.", 
+             "Gempa 5,6 magnitudo guncang Jawa Barat, tidak ada korban jiwa, beberapa bangunan rusak ringan."),
+            
+            ("Pemerintah Indonesia meluncurkan program vaksinasi COVID-19 untuk anak-anak usia 6-11 tahun di seluruh wilayah Indonesia. Program ini menargetkan sekitar 26,5 juta anak dan akan dilaksanakan secara bertahap mulai bulan depan. Vaksin yang digunakan telah mendapatkan izin penggunaan darurat dari BPOM.", 
+             "Pemerintah luncurkan vaksinasi COVID-19 untuk 26,5 juta anak 6-11 tahun mulai bulan depan."),
+            
+            ("Badan Meteorologi, Klimatologi, dan Geofisika (BMKG) memperkirakan cuaca Jakarta akan cerah berawan sepanjang hari ini. Suhu diperkirakan berkisar antara 24-32 derajat Celsius dengan kelembaban sekitar 70-90%. BMKG juga memprediksi akan terjadi hujan ringan pada sore hari di beberapa wilayah Jakarta Selatan dan Jakarta Timur.", 
+             "BMKG: Jakarta cerah berawan, suhu 24-32°C, kemungkinan hujan ringan sore hari di Jakarta Selatan dan Timur."),
+             
+            ("Menteri Pendidikan mengumumkan kebijakan baru terkait kurikulum pendidikan nasional yang akan diterapkan mulai tahun ajaran berikutnya. Kurikulum baru ini menekankan pada pengembangan keterampilan berpikir kritis, kreativitas, dan kemampuan adaptasi terhadap perkembangan teknologi. Sosialisasi akan dilakukan secara bertahap kepada para guru di seluruh Indonesia.", 
+             "Menteri Pendidikan umumkan kurikulum baru fokus pada keterampilan berpikir kritis dan adaptasi teknologi."),
+             
+            ("Bank Indonesia mempertahankan suku bunga acuan pada level 5,75% dalam rapat dewan gubernur yang diselenggarakan hari ini. Keputusan ini diambil dengan mempertimbangkan stabilitas ekonomi nasional di tengah ketidakpastian global. Bank Indonesia juga memproyeksikan pertumbuhan ekonomi Indonesia tahun ini akan berada pada kisaran 4,7% hingga 5,5%.", 
+             "BI pertahankan suku bunga acuan 5,75%, proyeksi pertumbuhan ekonomi 4,7-5,5%."),
+             
+            ("Festival budaya tahunan 'Pesona Indonesia' akan diselenggarakan di Yogyakarta selama seminggu penuh mulai tanggal 15 Agustus mendatang. Festival ini menampilkan berbagai seni pertunjukan tradisional, pameran kerajinan, dan kuliner khas dari seluruh nusantara. Panitia mengharapkan festival ini dapat mendorong pemulihan sektor pariwisata dan ekonomi kreatif.", 
+             "Festival 'Pesona Indonesia' akan digelar di Yogyakarta 15 Agustus, tampilkan seni, kerajinan, dan kuliner nusantara."),
+             
+            ("Peneliti dari Institut Teknologi Bandung berhasil mengembangkan sistem deteksi dini bencana tanah longsor menggunakan teknologi sensor dan kecerdasan buatan. Sistem ini mampu memberikan peringatan hingga 24 jam sebelum terjadinya longsor dengan tingkat akurasi mencapai 85%. Inovasi ini diharapkan dapat mengurangi korban jiwa akibat bencana tanah longsor yang sering terjadi di Indonesia.", 
+             "Peneliti ITB kembangkan sistem deteksi dini longsor dengan AI, berikan peringatan 24 jam sebelumnya, akurasi 85%."),
+             
+            ("Kementerian Perhubungan meluncurkan aplikasi transportasi publik terintegrasi untuk wilayah Jabodetabek. Aplikasi ini memungkinkan pengguna untuk merencanakan perjalanan menggunakan berbagai moda transportasi seperti MRT, LRT, Transjakarta, dan KRL dengan informasi jadwal dan rute yang akurat. Aplikasi ini juga dilengkapi dengan fitur pembayaran digital yang terintegrasi.", 
+             "Kemenhub luncurkan aplikasi transportasi terintegrasi Jabodetabek untuk MRT, LRT, Transjakarta, dan KRL dengan fitur pembayaran digital.")
         ]
         
         # Generate as many samples as needed
@@ -262,6 +312,7 @@ def main():
     parser.add_argument("--format", type=str, default="csv", choices=["csv", "jsonl"], 
                         help="Output file format")
     parser.add_argument("--use_mock", action="store_true", help="Use mock data instead of downloading")
+    parser.add_argument("--use_seacrowd", action="store_true", help="Try loading with seacrowd library first")
     args = parser.parse_args()
     
     # Create output directory if it doesn't exist
@@ -272,15 +323,15 @@ def main():
     
     if args.use_mock:
         # Use mock data for testing
-        data = loader.create_mock_dataset(num_samples=args.max_samples or 10)
+        data = loader.create_mock_dataset(num_samples=args.max_samples or 100)
     else:
         # Load and preprocess real data
         try:
-            data = loader.preprocess(max_samples=args.max_samples)
+            data = loader.preprocess(max_samples=args.max_samples, use_seacrowd=args.use_seacrowd)
         except Exception as e:
             print(f"Error preprocessing real data: {e}")
             print("Falling back to mock data...")
-            data = loader.create_mock_dataset(num_samples=args.max_samples or 10)
+            data = loader.create_mock_dataset(num_samples=args.max_samples or 100)
     
     # Save to specified format
     if args.format == "csv":

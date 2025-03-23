@@ -38,11 +38,12 @@ def load_indosum_dataset(data_path=None, split="train", sample_size=None, seed=4
             # Otherwise, assume it's already the right split
         except Exception as e:
             print(f"Error loading from disk: {e}")
-            print("Attempting to load from Hugging Face...")
-            dataset = load_dataset("SEACrowd/indosum", split=split)
+            # print("Attempting to load from Hugging Face...")
+            # dataset = load_dataset("SEACrowd/indosum", split=split)
     else:
-        print(f"Loading IndoSum dataset from Hugging Face, split: {split}")
-        dataset = load_dataset("SEACrowd/indosum", split=split)
+        print(f'failed to load data')
+        # print(f"Loading IndoSum dataset from Hugging Face, split: {split}")
+        # dataset = load_dataset("SEACrowd/indosum", split=split)
     
     print(f"Dataset loaded successfully with {len(dataset)} examples")
     
